@@ -1,0 +1,233 @@
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+using System.Threading;
+using System.Collections.Generic;
+using System.Text; // Для StringBuilder
+
+public partial class Form1 : Form
+{
+    // --- Компоненты формы ---
+    private Label startLabel, endLabel, threadsLabel;
+    private NumericUpDown startNumeric, endNumeric, threadsNumeric;
+    private Button startStopButton;
+    private ListView outputListView; // Для отображения вывода потоков
+    private Label statusLabel;
+
+    // --- Потоки ---
+    private List<Thread> workerThreads = new List<Thread>();
+    private volatile bool isRunning = false; // Флаг для остановки потоков
+
+    public Form1()
+    {
+        InitializeComponent();
+
+        this.Text = "Multi-Threaded Counter UI";
+        this.Size = new Size(600, 500);
+        this.DoubleBuffered = true;
+
+        // --- Элементы управления для ввода ---
+        startLabel = new Label { Location = new Point(10, 15), Text = "Start:", AutoSize = true };
+        startNumeric = new NumericUpDown { Location = new Point(60, 13), Size = new Size(80, 20), Minimum = 0, Maximum = 1000, Value = 0 };
+        this.Controls.Add(startLabel); this.Controls.Add(startNumeric);
+
+        endLabel = new Label { Location = new Point(160, 15), Text = "End:", AutoSize = true };
+        endNumeric = new NumericUpDown { Location = new Point(210, 13), Size = new Size(80, 20), Minimum = 0, Maximum = 1000, Value = 50 };
+        this.Controls.Add(endLabel); this.Controls.Add(endNumeric);
+
+        threadsLabel = new Label { Location = new Point(310, 15), Text = "Threads:", AutoSize = true };
+        threadsNumeric = new NumericUpDown { Location = new Point(380, 13), Size = new Size(60, 20), Minimum = 1, Maximum = 10, Value = 2 };
+        this.Controls.Add(threadsLabel); this.Controls.Add(threadsNumeric);
+
+        startStopButton = new Button { Location = new Point(460, 10), Size = new Size(100, 25), Text = "Start", UseVisualStyleBackColor = true };
+        this.Controls.Add(startStopButton);
+        startStopButton.Click += StartStopButton_Click;
+
+        // --- ListView для вывода ---
+        outputListView = new ListView
+        {
+            Location = new Point(10, 50),
+            Size = new Size(this.ClientSize.Width - 20, this.ClientSize.Height - 100),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            View = View.Details,
+            GridLines = true,
+            FullRowSelect = true
+        };
+        this.Controls.Add(outputListView);
+        outputListView.Columns.Add("Thread Name", 150);
+        outputListView.Columns.Add("Message", 350); // Сообщение от потока
+
+        // --- Статус ---
+        statusLabel = new Label { Location = new Point(10, this.ClientSize.Height - 30), Text = "Status: Ready", AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        this.Controls.Add(statusLabel);
+
+        // --- Переопределяем WndProc для обработки сообщений от потоков (для вывода в ListView) ---
+        // Мы будем использовать механизм безопасного обновления UI из другого потока.
+        // Обычно используют BackgroundWorker или Control.Invoke/BeginInvoke.
+        // Здесь мы будем использовать Invoke для безопасности.
+    }
+
+    /// <summary>
+    /// Метод, который будет выполняться в каждом потоке.
+    /// </summary>
+    private void CountInRangeUI(object rangeData)
+    {
+        if (rangeData is Tuple<int, int> range)
+        {
+            int start = range.Item1;
+            int end = range.Item2;
+            string threadName = Thread.CurrentThread.Name;
+
+            // Безопасный вывод в ListView из рабочего потока
+            SafeWriteLine(threadName, $"Начало. Диапазон [{start}, {end}].");
+
+            for (int i = start; i <= end; i++)
+            {
+                if (!isRunning) break; // Проверяем флаг остановки
+
+                SafeWriteLine(threadName, $"{i}");
+                Thread.Sleep(50);
+            }
+
+            if (isRunning) // Если не прервано
+            {
+                SafeWriteLine(threadName, $"Завершено.");
+            }
+            else
+            {
+                SafeWriteLine(threadName, $"Прервано.");
+            }
+        }
+        else
+        {
+            SafeWriteLine("ErrorThread", "Неверные данные диапазона.");
+        }
+    }
+
+    /// <summary>
+    /// Безопасно добавляет строку в ListView из любого потока.
+    /// </summary>
+    private void SafeWriteLine(string threadName, string message)
+    {
+        // Проверяем, нужно ли использовать Invoke (если вызывается не из UI потока)
+        if (outputListView.InvokeRequired)
+        {
+            // Используем BeginInvoke для асинхронного обновления UI
+            // Это предотвратит блокировку UI потока
+            outputListView.BeginInvoke((MethodInvoker)delegate
+            {
+                try
+                {
+                    ListViewItem item = new ListViewItem(threadName);
+                    item.SubItems.Add(message);
+                    outputListView.Items.Add(item);
+                    // Автоматическая прокрутка вниз
+                    if (outputListView.Items.Count > 0)
+                    {
+                        outputListView.Items[outputListView.Items.Count - 1].EnsureVisible();
+                    }
+                }
+                catch { } // Игнорируем ошибки, если форма уже закрывается
+            });
+        }
+        else
+        {
+            // Если уже в UI потоке, обновляем напрямую
+            try
+            {
+                ListViewItem item = new ListViewItem(threadName);
+                item.SubItems.Add(message);
+                outputListView.Items.Add(item);
+                if (outputListView.Items.Count > 0)
+                {
+                    outputListView.Items[outputListView.Items.Count - 1].EnsureVisible();
+                }
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Обработчик кнопки Start/Stop.
+    /// </summary>
+    private void StartStopButton_Click(object sender, EventArgs e)
+    {
+        if (!isRunning) // Начать
+        {
+            isRunning = true;
+            startStopButton.Text = "Stop";
+            statusLabel.Text = "Status: Running...";
+            outputListView.Items.Clear(); // Очищаем предыдущий вывод
+            workerThreads.Clear(); // Очищаем список потоков
+
+            int start = (int)startNumeric.Value;
+            int end = (int)endNumeric.Value;
+            int numThreads = (int)threadsNumeric.Value;
+
+            if (start > end)
+            {
+                MessageBox.Show("Start value cannot be greater than End value.", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                isRunning = false;
+                startStopButton.Text = "Start";
+                statusLabel.Text = "Status: Ready";
+                return;
+            }
+
+            for (int i = 0; i < numThreads; i++)
+            {
+                var rangeData = new Tuple<int, int>(start, end);
+                Thread workerThread = new Thread(CountInRangeUI)
+                {
+                    Name = $"Worker-{i + 1}",
+                    IsBackground = true // Делаем фоновыми, чтобы они не мешали закрытию формы
+                };
+                workerThreads.Add(workerThread);
+                workerThread.Start(rangeData);
+            }
+
+            // Запускаем таймер для проверки состояния потоков и обновления UI
+            // Это один из способов: периодически проверять, все ли потоки завершились.
+            // Другой - использовать BackgroundWorker.
+            // Здесь мы просто запустим потоки, и они сами будут писать в ListView.
+            // Кнопка "Stop" будет работать, устанавливая флаг isRunning.
+        }
+        else // Остановить
+        {
+            isRunning = false; // Сигнализируем потокам о необходимости остановки
+            startStopButton.Text = "Start";
+            statusLabel.Text = "Status: Stopping...";
+
+            // Ждем некоторое время, чтобы потоки успели увидеть флаг isRunning
+            // и завершиться.
+            // Можно добавить явное Join, но для фоновых потоков это может быть сложнее,
+            // если они долго работают.
+            // Проверяем, все ли потоки завершились.
+            // Это сложный момент. Для простоты, мы просто дадим им увидеть isRunning=false.
+            // Можно добавить таймер, который будет ждать и проверять
+            // Thread.Sleep(500); // Небольшая пауза для видимости остановки
+
+            // Обновляем статус после некоторого ожидания
+            // Потоки должны сами написать "Прервано"
+            // statusLabel.Text = "Status: Stopped";
+            // Чтобы понять, когда все реально остановились, нужно ждать.
+            // Но для простоты, просто меняем кнопку и флаг.
+        }
+    }
+
+    // --- Код, сгенерированный дизайнером ---
+    private System.ComponentModel.IContainer components = null;
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && (components != null)) components.Dispose();
+        base.Dispose(disposing);
+    }
+    #region Windows Form Designer generated code
+    private void InitializeComponent()
+    {
+        this.components = new System.ComponentModel.Container();
+        this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+        this.ClientSize = new System.Drawing.Size(600, 500);
+        this.Text = "Form1"; // Будет переопределено
+    }
+    #endregion
+}
