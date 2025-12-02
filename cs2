@@ -3,7 +3,7 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.Threading;
 using System.Collections.Generic;
-using System.Text; // Для StringBuilder
+using System.Text; 
 
 public partial class Form1 : Form
 {
@@ -57,19 +57,11 @@ public partial class Form1 : Form
         outputListView.Columns.Add("Thread Name", 150);
         outputListView.Columns.Add("Message", 350); // Сообщение от потока
 
-        // --- Статус ---
+        
         statusLabel = new Label { Location = new Point(10, this.ClientSize.Height - 30), Text = "Status: Ready", AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
         this.Controls.Add(statusLabel);
 
-        // --- Переопределяем WndProc для обработки сообщений от потоков (для вывода в ListView) ---
-        // Мы будем использовать механизм безопасного обновления UI из другого потока.
-        // Обычно используют BackgroundWorker или Control.Invoke/BeginInvoke.
-        // Здесь мы будем использовать Invoke для безопасности.
-    }
-
-    /// <summary>
-    /// Метод, который будет выполняться в каждом потоке.
-    /// </summary>
+    
     private void CountInRangeUI(object rangeData)
     {
         if (rangeData is Tuple<int, int> range)
@@ -104,16 +96,13 @@ public partial class Form1 : Form
         }
     }
 
-    /// <summary>
-    /// Безопасно добавляет строку в ListView из любого потока.
-    /// </summary>
+    
     private void SafeWriteLine(string threadName, string message)
     {
         // Проверяем, нужно ли использовать Invoke (если вызывается не из UI потока)
         if (outputListView.InvokeRequired)
         {
-            // Используем BeginInvoke для асинхронного обновления UI
-            // Это предотвратит блокировку UI потока
+           
             outputListView.BeginInvoke((MethodInvoker)delegate
             {
                 try
@@ -132,7 +121,7 @@ public partial class Form1 : Form
         }
         else
         {
-            // Если уже в UI потоке, обновляем напрямую
+            
             try
             {
                 ListViewItem item = new ListViewItem(threadName);
@@ -147,9 +136,6 @@ public partial class Form1 : Form
         }
     }
 
-    /// <summary>
-    /// Обработчик кнопки Start/Stop.
-    /// </summary>
     private void StartStopButton_Click(object sender, EventArgs e)
     {
         if (!isRunning) // Начать
@@ -185,11 +171,7 @@ public partial class Form1 : Form
                 workerThread.Start(rangeData);
             }
 
-            // Запускаем таймер для проверки состояния потоков и обновления UI
-            // Это один из способов: периодически проверять, все ли потоки завершились.
-            // Другой - использовать BackgroundWorker.
-            // Здесь мы просто запустим потоки, и они сами будут писать в ListView.
-            // Кнопка "Stop" будет работать, устанавливая флаг isRunning.
+            
         }
         else // Остановить
         {
@@ -197,24 +179,6 @@ public partial class Form1 : Form
             startStopButton.Text = "Start";
             statusLabel.Text = "Status: Stopping...";
 
-            // Ждем некоторое время, чтобы потоки успели увидеть флаг isRunning
-            // и завершиться.
-            // Можно добавить явное Join, но для фоновых потоков это может быть сложнее,
-            // если они долго работают.
-            // Проверяем, все ли потоки завершились.
-            // Это сложный момент. Для простоты, мы просто дадим им увидеть isRunning=false.
-            // Можно добавить таймер, который будет ждать и проверять
-            // Thread.Sleep(500); // Небольшая пауза для видимости остановки
-
-            // Обновляем статус после некоторого ожидания
-            // Потоки должны сами написать "Прервано"
-            // statusLabel.Text = "Status: Stopped";
-            // Чтобы понять, когда все реально остановились, нужно ждать.
-            // Но для простоты, просто меняем кнопку и флаг.
-        }
-    }
-
-    // --- Код, сгенерированный дизайнером ---
     private System.ComponentModel.IContainer components = null;
     protected override void Dispose(bool disposing)
     {
