@@ -85,9 +85,7 @@ public partial class Form1 : Form
         this.Controls.Add(statusLabel);
     }
 
-    /// <summary>
-    /// Безопасно добавляет строку в ListView из любого потока.
-    /// </summary>
+
     private void SafeWriteLine(string metric, string value)
     {
         if (resultsListView.InvokeRequired)
@@ -123,9 +121,7 @@ public partial class Form1 : Form
         }
     }
 
-    /// <summary>
-    /// Метод для поиска минимума в части массива.
-    /// </summary>
+  
     private void FindMinPartial(object data)
     {
         if (!isAnalyzing) return;
@@ -153,9 +149,7 @@ public partial class Form1 : Form
         SafeWriteLine(threadName, "Min calculation finished.");
     }
 
-    /// <summary>
-    /// Метод для поиска максимума в части массива.
-    /// </summary>
+    
     private void FindMaxPartial(object data)
     {
         if (!isAnalyzing) return;
@@ -183,9 +177,7 @@ public partial class Form1 : Form
         SafeWriteLine(threadName, "Max calculation finished.");
     }
 
-    /// <summary>
-    /// Метод для вычисления частичной суммы.
-    /// </summary>
+    
     private void CalculateSumPartial(object data)
     {
         if (!isAnalyzing) return;
@@ -213,9 +205,7 @@ public partial class Form1 : Form
         SafeWriteLine(threadName, "Sum calculation finished.");
     }
 
-    /// <summary>
-    /// Обработчик кнопки "Analyze".
-    /// </summary>
+    
     private void StartButton_Click(object sender, EventArgs e)
     {
         if (isAnalyzing) return; // Уже выполняется
@@ -283,8 +273,7 @@ public partial class Form1 : Form
 
         analysisThreads = threads; // Сохраняем в поле класса для доступа из StopButton
 
-        // --- Ожидание завершения всех потоков ---
-        // Используем отдельный поток для Join, чтобы UI не завис
+    
         Thread joinThread = new Thread(() =>
         {
             foreach (Thread thread in analysisThreads)
@@ -293,7 +282,6 @@ public partial class Form1 : Form
                 if (!isAnalyzing) break; // Если нажали Stop, выходим из Join
             }
 
-            // Когда все потоки завершились (или были остановлены)
             if (isAnalyzing) // Если не было остановки
             {
                 averageResult = (double)totalSum / arraySize;
@@ -329,9 +317,7 @@ public partial class Form1 : Form
         joinThread.Start();
     }
 
-    /// <summary>
-    /// Обработчик кнопки "Stop".
-    /// </summary>
+   
     private void StopButton_Click(object sender, EventArgs e)
     {
         if (!isAnalyzing) return;
@@ -341,14 +327,10 @@ public partial class Form1 : Form
         startButton.Enabled = false; // Нельзя начать, пока идет остановка
         stopButton.Enabled = false;
 
-        // Потоки сами увидят флаг isAnalyzing и завершатся.
-        // Если потоки работают долго, возможно, потребуется более агрессивное прерывание,
-        // но для данного примера флаг isAnalyzing достаточен.
+        
     }
 
-    /// <summary>
-    /// Сбрасывает UI в состояние готовности.
-    /// </summary>
+    
     private void ResetUIState()
     {
         isAnalyzing = false;
@@ -358,9 +340,7 @@ public partial class Form1 : Form
         analysisThreads.Clear();
     }
 
-    /// <summary>
-    /// Записывает результаты анализа в файл.
-    /// </summary>
+    
     private void WriteResultsToFileUI(string filePath, int[] data, int min, int max, double average)
     {
         try
