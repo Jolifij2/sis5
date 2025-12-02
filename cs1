@@ -1,0 +1,412 @@
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+using System.Threading;
+using System.Collections.Generic;
+using System.Linq; // Для LINQ
+using System.IO;  // Для записи в файл
+using System.Text; // Для StringBuilder
+
+public partial class Form1 : Form
+{
+    // --- Компоненты формы ---
+    private Label arraySizeLabel, startLabel, endLabel, threadsLabel;
+    private NumericUpDown arraySizeNumeric, startNumeric, endNumeric, threadsNumeric;
+    private Button startButton, stopButton;
+    private ListView resultsListView;
+    private Label statusLabel;
+
+    // --- Переменные для результатов ---
+    private int[] numbers;
+    private int minResult = int.MaxValue;
+    private int maxResult = int.MinValue;
+    private long totalSum = 0; // Используем long для суммы
+    private double averageResult = 0.0;
+    private volatile bool isAnalyzing = false; // Флаг для остановки
+
+    // --- Потоки ---
+    private List<Thread> analysisThreads = new List<Thread>();
+
+    // --- Константы ---
+    private const int DEFAULT_ARRAY_SIZE = 10000;
+    private const int DEFAULT_MIN_THREADS = 1;
+    private const int MAX_THREADS = 10; // Ограничение на количество потоков
+
+    public Form1()
+    {
+        InitializeComponent();
+
+        this.Text = "Number Analyzer UI";
+        this.Size = new Size(700, 600);
+        this.DoubleBuffered = true;
+
+        // --- Настройки ввода ---
+        arraySizeLabel = new Label { Location = new Point(10, 15), Text = "Array Size:", AutoSize = true };
+        arraySizeNumeric = new NumericUpDown { Location = new Point(80, 13), Size = new Size(100, 20), Minimum = 100, Maximum = 1000000, Value = DEFAULT_ARRAY_SIZE, ThousandsSeparator = true };
+        this.Controls.Add(arraySizeLabel); this.Controls.Add(arraySizeNumeric);
+
+        startLabel = new Label { Location = new Point(200, 15), Text = "Min Value:", AutoSize = true };
+        startNumeric = new NumericUpDown { Location = new Point(270, 13), Size = new Size(80, 20), Minimum = -100000, Maximum = 100000, Value = -10000, ThousandsSeparator = true };
+        this.Controls.Add(startLabel); this.Controls.Add(startNumeric);
+
+        endLabel = new Label { Location = new Point(370, 15), Text = "Max Value:", AutoSize = true };
+        endNumeric = new NumericUpDown { Location = new Point(440, 13), Size = new Size(80, 20), Minimum = -100000, Maximum = 100000, Value = 10000, ThousandsSeparator = true };
+        this.Controls.Add(endLabel); this.Controls.Add(endNumeric);
+
+        threadsLabel = new Label { Location = new Point(540, 15), Text = "Threads:", AutoSize = true };
+        threadsNumeric = new NumericUpDown { Location = new Point(600, 13), Size = new Size(60, 20), Minimum = DEFAULT_MIN_THREADS, Maximum = MAX_THREADS, Value = 2 };
+        this.Controls.Add(threadsLabel); this.Controls.Add(threadsNumeric);
+
+        // --- Кнопки ---
+        startButton = new Button { Location = new Point(10, 45), Size = new Size(100, 25), Text = "Analyze", UseVisualStyleBackColor = true };
+        this.Controls.Add(startButton);
+        startButton.Click += StartButton_Click;
+
+        stopButton = new Button { Location = new Point(120, 45), Size = new Size(100, 25), Text = "Stop", UseVisualStyleBackColor = true, Enabled = false };
+        this.Controls.Add(stopButton);
+        stopButton.Click += StopButton_Click;
+
+        // --- ListView для результатов ---
+        resultsListView = new ListView
+        {
+            Location = new Point(10, 80),
+            Size = new Size(this.ClientSize.Width - 20, this.ClientSize.Height - 130),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            View = View.Details,
+            GridLines = true,
+            FullRowSelect = true
+        };
+        this.Controls.Add(resultsListView);
+        resultsListView.Columns.Add("Metric", 150);
+        resultsListView.Columns.Add("Value", 350);
+
+        // --- Статус ---
+        statusLabel = new Label { Location = new Point(10, this.ClientSize.Height - 30), Text = "Status: Ready", AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+        this.Controls.Add(statusLabel);
+    }
+
+    /// <summary>
+    /// Безопасно добавляет строку в ListView из любого потока.
+    /// </summary>
+    private void SafeWriteLine(string metric, string value)
+    {
+        if (resultsListView.InvokeRequired)
+        {
+            resultsListView.BeginInvoke((MethodInvoker)delegate
+            {
+                try
+                {
+                    ListViewItem item = new ListViewItem(metric);
+                    item.SubItems.Add(value);
+                    resultsListView.Items.Add(item);
+                    if (resultsListView.Items.Count > 0)
+                    {
+                        resultsListView.Items[resultsListView.Items.Count - 1].EnsureVisible();
+                    }
+                }
+                catch { }
+            });
+        }
+        else
+        {
+            try
+            {
+                ListViewItem item = new ListViewItem(metric);
+                item.SubItems.Add(value);
+                resultsListView.Items.Add(item);
+                if (resultsListView.Items.Count > 0)
+                {
+                    resultsListView.Items[resultsListView.Items.Count - 1].EnsureVisible();
+                }
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Метод для поиска минимума в части массива.
+    /// </summary>
+    private void FindMinPartial(object data)
+    {
+        if (!isAnalyzing) return;
+
+        var tuple = data as Tuple<int[], int, int>; // Массив, начальный индекс, конечный индекс
+        if (tuple == null) return;
+
+        int[] arr = tuple.Item1;
+        int startIndex = tuple.Item2;
+        int endIndex = tuple.Item3;
+        string threadName = Thread.CurrentThread.Name;
+
+        int currentMin = int.MaxValue;
+        for (int i = startIndex; i <= endIndex; i++)
+        {
+            if (!isAnalyzing) break;
+            if (arr[i] < currentMin) currentMin = arr[i];
+            Thread.Sleep(1);
+        }
+
+        if (isAnalyzing && currentMin < minResult) // Если анализ не прерван и найден новый минимум
+        {
+            Interlocked.Exchange(ref minResult, currentMin); // Используем Interlocked для потокобезопасного обновления
+        }
+        SafeWriteLine(threadName, "Min calculation finished.");
+    }
+
+    /// <summary>
+    /// Метод для поиска максимума в части массива.
+    /// </summary>
+    private void FindMaxPartial(object data)
+    {
+        if (!isAnalyzing) return;
+
+        var tuple = data as Tuple<int[], int, int>; // Массив, начальный индекс, конечный индекс
+        if (tuple == null) return;
+
+        int[] arr = tuple.Item1;
+        int startIndex = tuple.Item2;
+        int endIndex = tuple.Item3;
+        string threadName = Thread.CurrentThread.Name;
+
+        int currentMax = int.MinValue;
+        for (int i = startIndex; i <= endIndex; i++)
+        {
+            if (!isAnalyzing) break;
+            if (arr[i] > currentMax) currentMax = arr[i];
+            Thread.Sleep(1);
+        }
+
+        if (isAnalyzing && currentMax > maxResult) // Если анализ не прерван и найден новый максимум
+        {
+            Interlocked.Exchange(ref maxResult, currentMax); // Потокобезопасное обновление
+        }
+        SafeWriteLine(threadName, "Max calculation finished.");
+    }
+
+    /// <summary>
+    /// Метод для вычисления частичной суммы.
+    /// </summary>
+    private void CalculateSumPartial(object data)
+    {
+        if (!isAnalyzing) return;
+
+        var tuple = data as Tuple<int[], int, int>; // Массив, начальный индекс, конечный индекс
+        if (tuple == null) return;
+
+        int[] arr = tuple.Item1;
+        int startIndex = tuple.Item2;
+        int endIndex = tuple.Item3;
+        string threadName = Thread.CurrentThread.Name;
+
+        long currentSum = 0;
+        for (int i = startIndex; i <= endIndex; i++)
+        {
+            if (!isAnalyzing) break;
+            currentSum += arr[i];
+            Thread.Sleep(1);
+        }
+
+        if (isAnalyzing) // Если анализ не прерван
+        {
+            Interlocked.Add(ref totalSum, currentSum); // Потокобезопасное добавление к общей сумме
+        }
+        SafeWriteLine(threadName, "Sum calculation finished.");
+    }
+
+    /// <summary>
+    /// Обработчик кнопки "Analyze".
+    /// </summary>
+    private void StartButton_Click(object sender, EventArgs e)
+    {
+        if (isAnalyzing) return; // Уже выполняется
+
+        isAnalyzing = true;
+        startButton.Enabled = false;
+        stopButton.Enabled = true;
+        statusLabel.Text = "Status: Generating numbers...";
+        resultsListView.Items.Clear(); // Очищаем предыдущие результаты
+        analysisThreads.Clear();
+
+        // --- Генерация чисел ---
+        int arraySize = (int)arraySizeNumeric.Value;
+        int minValue = (int)startNumeric.Value;
+        int maxValue = (int)endNumeric.Value;
+        int numThreads = (int)threadsNumeric.Value;
+
+        if (minValue > maxValue)
+        {
+            MessageBox.Show("Min Value cannot be greater than Max Value.", "Input Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            ResetUIState();
+            return;
+        }
+
+        numbers = new int[arraySize];
+        Random rand = new Random();
+        SafeWriteLine("MainThread", $"Generating {arraySize} numbers between {minValue} and {maxValue}...");
+        for (int i = 0; i < arraySize; i++)
+        {
+            numbers[i] = rand.Next(minValue, maxValue + 1); // maxValue + 1, т.к. Next - эксклюзивный верхний предел
+        }
+        SafeWriteLine("MainThread", "Number generation complete.");
+        statusLabel.Text = "Status: Analyzing...";
+
+        // --- Инициализация общих переменных ---
+        minResult = int.MaxValue;
+        maxResult = int.MinValue;
+        totalSum = 0;
+        averageResult = 0.0;
+
+        // --- Разделение работы для потоков ---
+        int chunkSize = arraySize / numThreads;
+        List<Thread> threads = new List<Thread>();
+
+        for (int i = 0; i < numThreads; i++)
+        {
+            int startIndex = i * chunkSize;
+            int endIndex = (i == numThreads - 1) ? (arraySize - 1) : (startIndex + chunkSize - 1); // Последний поток берет остаток
+
+            // Поток для минимума
+            Thread minThread = new Thread(FindMinPartial) { Name = $"MinThread-{i + 1}", IsBackground = true };
+            threads.Add(minThread);
+            minThread.Start(new Tuple<int[], int, int>(numbers, startIndex, endIndex));
+
+            // Поток для максимума
+            Thread maxThread = new Thread(FindMaxPartial) { Name = $"MaxThread-{i + 1}", IsBackground = true };
+            threads.Add(maxThread);
+            maxThread.Start(new Tuple<int[], int, int>(numbers, startIndex, endIndex));
+
+            // Поток для суммы
+            Thread sumThread = new Thread(CalculateSumPartial) { Name = $"SumThread-{i + 1}", IsBackground = true };
+            threads.Add(sumThread);
+            sumThread.Start(new Tuple<int[], int, int>(numbers, startIndex, endIndex));
+        }
+
+        analysisThreads = threads; // Сохраняем в поле класса для доступа из StopButton
+
+        // --- Ожидание завершения всех потоков ---
+        // Используем отдельный поток для Join, чтобы UI не завис
+        Thread joinThread = new Thread(() =>
+        {
+            foreach (Thread thread in analysisThreads)
+            {
+                thread.Join();
+                if (!isAnalyzing) break; // Если нажали Stop, выходим из Join
+            }
+
+            // Когда все потоки завершились (или были остановлены)
+            if (isAnalyzing) // Если не было остановки
+            {
+                averageResult = (double)totalSum / arraySize;
+                SafeWriteLine("MainThread", "Analysis complete.");
+                SafeWriteLine("MainThread", $"Min: {minResult}");
+                SafeWriteLine("MainThread", $"Max: {maxResult}");
+                SafeWriteLine("MainThread", $"Average: {averageResult:F2}");
+
+                // --- Запись в файл ---
+                string outputFilePath = "analysis_results_ui.txt";
+                WriteResultsToFileUI(outputFilePath, numbers, minResult, maxResult, averageResult);
+
+                // Обновляем UI после завершения
+                Invoke((MethodInvoker)delegate
+                {
+                    statusLabel.Text = "Status: Analysis Complete.";
+                    startButton.Enabled = true;
+                    stopButton.Enabled = false;
+                    isAnalyzing = false;
+                });
+            }
+            else // Если была остановка
+            {
+                Invoke((MethodInvoker)delegate
+                {
+                    statusLabel.Text = "Status: Analysis Stopped.";
+                    startButton.Enabled = true;
+                    stopButton.Enabled = false;
+                    isAnalyzing = false;
+                });
+            }
+        }) { Name = "JoinThread", IsBackground = true };
+        joinThread.Start();
+    }
+
+    /// <summary>
+    /// Обработчик кнопки "Stop".
+    /// </summary>
+    private void StopButton_Click(object sender, EventArgs e)
+    {
+        if (!isAnalyzing) return;
+
+        isAnalyzing = false; // Устанавливаем флаг остановки
+        statusLabel.Text = "Status: Stopping...";
+        startButton.Enabled = false; // Нельзя начать, пока идет остановка
+        stopButton.Enabled = false;
+
+        // Потоки сами увидят флаг isAnalyzing и завершатся.
+        // Если потоки работают долго, возможно, потребуется более агрессивное прерывание,
+        // но для данного примера флаг isAnalyzing достаточен.
+    }
+
+    /// <summary>
+    /// Сбрасывает UI в состояние готовности.
+    /// </summary>
+    private void ResetUIState()
+    {
+        isAnalyzing = false;
+        startButton.Enabled = true;
+        stopButton.Enabled = false;
+        statusLabel.Text = "Status: Ready";
+        analysisThreads.Clear();
+    }
+
+    /// <summary>
+    /// Записывает результаты анализа в файл.
+    /// </summary>
+    private void WriteResultsToFileUI(string filePath, int[] data, int min, int max, double average)
+    {
+        try
+        {
+            using (StreamWriter writer = new StreamWriter(filePath, false))
+            {
+                writer.WriteLine($"--- Number Analysis Results UI ---");
+                writer.WriteLine($"Timestamp: {DateTime.Now}");
+                writer.WriteLine($"Array Size: {data.Length}");
+                writer.WriteLine($"Min Value: {min}");
+                writer.WriteLine($"Max Value: {max}");
+                writer.WriteLine($"Average Value: {average:F2}");
+
+                writer.WriteLine("\n--- First 100 Numbers ---");
+                int numbersToWrite = Math.Min(100, data.Length);
+                for (int i = 0; i < numbersToWrite; i++)
+                {
+                    writer.Write($"{data[i]}, ");
+                    if ((i + 1) % 20 == 0) writer.WriteLine();
+                }
+                if (numbersToWrite > 0 && numbersToWrite % 20 != 0) writer.WriteLine();
+                if (data.Length > numbersToWrite) writer.WriteLine("...");
+
+                SafeWriteLine("MainThread", $"Results written to {filePath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SafeWriteLine("ErrorThread", $"Error writing to file '{filePath}': {ex.Message}");
+        }
+    }
+
+    // --- Код, сгенерированный дизайнером ---
+    private System.ComponentModel.IContainer components = null;
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && (components != null)) components.Dispose();
+        base.Dispose(disposing);
+    }
+    #region Windows Form Designer generated code
+    private void InitializeComponent()
+    {
+        this.components = new System.ComponentModel.Container();
+        this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+        this.ClientSize = new System.Drawing.Size(700, 600);
+        this.Text = "Form1"; // Будет переопределено
+    }
+    #endregion
+}
